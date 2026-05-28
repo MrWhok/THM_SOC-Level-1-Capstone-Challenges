@@ -3,6 +3,7 @@
 ## Table of Contents
 1. [Tempest](#tempest)
 2. [Boogeyman 1](#boogeyman-1)
+3. [Boogeyman 2](#boogeyman-2)
 
 ## Tempest
 ### Preparation - Tools and Artifacts
@@ -371,3 +372,107 @@
     cat chronological_chunks.txt | uniq | cut -d'.' -f1 | tr -d '\n' | xxd -r -p > stolen_data.kdbx
     ```
     We can open the `stolen_data.kdbx` file with KeePass and use the password from the previous question to open it. We will find a credit card number in the entry. The answer is `4024007128269551`.
+
+
+## Boogeyman 2
+1. What email was used to send the phishing email?
+
+    The answer is `westaylor23@outlook.com`.
+
+2. What is the email of the victim employee?
+
+    The answer is `maxine.beck@quicklogisticsorg.onmicrosoft.com`.
+
+3. What is the name of the attached malicious document?
+
+    The answer is `Resume_WesleyTaylor.doc`.
+
+4. What is the MD5 hash of the malicious attachment?
+
+    We can use this command to calculate the MD5 hash of the malicious attachment:
+
+    ```bash
+    md5sum Resume_WesleyTaylor.doc
+    ```
+    The answer is `52c4384a0b9e248b95804352ebec6c5b`.
+
+5. What URL is used to download the stage 2 payload based on the document's macro?
+
+    We can use `olevba` to analyze document's macro and find the URL used to download the stage 2 payload.
+
+    ```bash
+    olevba Resume_WesleyTaylor.doc
+    ```
+    The answer is `https://files.boogeymanisback.lol/aa2a9c53cbb80416d3b47d85538d9971/update.png`.
+
+6. What is the name of the process that executed the newly downloaded stage 2 payload?
+
+    We can use the previous olevba output. The answer is `wscript.exe`.
+
+7. What is the full file path of the malicious stage 2 payload?
+
+    We can use the previous olevba output. The answer is `C:\ProgramData\update.js`.
+
+8. What is the PID of the process that executed the stage 2 payload?
+
+    We can use `volatility` to analyze the memory dump and find the PID of the process that executed the stage 2 payload. In here, i used flag `windows.pstree` to find the process tree and find the relevant process.
+
+    ```bash
+    vol -f WKSTN-2961.raw windows.pstree
+    ```
+    ![alt text](<Assets/Boogeyman 2/1.png>)
+
+    The answer is `4260`.
+
+9. What is the parent PID of the process that executed the stage 2 payload?
+
+    We can use the previous image to find the parent PID of the process that executed the stage 2 payload. The answer is `1124`.
+
+10. What URL is used to download the malicious binary executed by the stage 2 payload?
+
+    In the previous, we have know that it used `boogeymanisback.lol` to download the malicious file. We can use `strings` to analyze the memory dump and filter the string with `boogeymanisback.lol` to find the URL used to download the malicious binary executed by the stage 2 payload.
+
+    ```bash
+    strings WKSTN-2961.raw | grep "boogeymanisback.lol"
+    ```
+    The answer is `https://files.boogeymanisback.lol/aa2a9c53cbb80416d3b47d85538d9971/update.exe`.
+
+11. What is the PID of the malicious process used to establish the C2 connection?
+
+    In the previous image result, we can see that there is a process with the name `updater.exe` that has similar name with the download binary in the previous question. I assume this process is used to establish the C2 connection. So, the answer is `6216`.
+
+12. What is the full file path of the malicious process used to establish the C2 connection?
+
+    First, we need to dump the process with PID `6216` by using `volatility` with flag `windows.memmap`.
+
+    ```bash
+    vol -f WKSTN-2961.raw windows.memmap --pid 6216 --dump > /dev/null
+    ```
+    Then, we can check the dumped file with `strings` with the keyword `updater.exe` to find the full file path of the malicious process used to establish the C2 connection.
+
+    ```bash
+    strings pid.6216.dmp | grep updater.exe
+    ```
+    The answer is `C:\Windows\Tasks\updater.exe`.
+
+13. What is the IP address and port of the C2 connection initiated by the malicious binary? (Format: IP address:port)
+
+    We can filter the previous dump to find `http` or `https` string.
+
+    ```bash
+    strings pid.6216.dmp | grep -E "http://|https://"
+    ```
+    We can find the URL with the IP address and port of the C2 connection initiated by the malicious binary. The answer is `128.199.95.189:8080`.
+
+14. What is the full file path of the malicious email attachment based on the memory dump?
+
+    We can refer to the previous image. We can see that there is a `WINWORD.exe` process which the child process of `outlook.exe`. We can dump it with `volatility` with flag `windows.memmap`.
+
+    ```bash
+    vol -f WKSTN-2961.raw windows.memmap --pid 1124 --dump > /dev/null
+    ```
+    Then, we can check the dumped file with `strings` with the keyword `Resume` to find the full file path of the malicious email attachment based on the memory dump. The answer is `C:\Users\maxine.beck\AppData\Local\Microsoft\Windows\INetCache\Content.Outlook\WQHGZCFI\Resume_WesleyTaylor (002).doc`.
+
+15. The attacker implanted a scheduled task right after establishing the c2 callback. What is the full command used by the attacker to maintain persistent access?
+
+    I have tried to strings `updater.exe` process dump with filter `schtasks` but i didnt get the answer. So i tried to strings the `WKSTN-2961.raw`. The answer is `chtasks /Create /F /SC DAILY /ST 09:00 /TN Updater /TR 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NonI -W hidden -c \"IEX ([Text.Encoding]::UNICODE.GetString([Convert]::FromBase64String((gp HKCU:\Software\Microsoft\Windows\CurrentVersion debug).debug)))\"'`.
