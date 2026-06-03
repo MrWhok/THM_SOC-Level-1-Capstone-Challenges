@@ -4,6 +4,7 @@
 1. [Tempest](#tempest)
 2. [Boogeyman 1](#boogeyman-1)
 3. [Boogeyman 2](#boogeyman-2)
+4. [Boogeyman 3](#boogeyman-3)
 
 ## Tempest
 ### Preparation - Tools and Artifacts
@@ -476,3 +477,131 @@
 15. The attacker implanted a scheduled task right after establishing the c2 callback. What is the full command used by the attacker to maintain persistent access?
 
     I have tried to strings `updater.exe` process dump with filter `schtasks` but i didnt get the answer. So i tried to strings the `WKSTN-2961.raw`. The answer is `chtasks /Create /F /SC DAILY /ST 09:00 /TN Updater /TR 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NonI -W hidden -c \"IEX ([Text.Encoding]::UNICODE.GetString([Convert]::FromBase64String((gp HKCU:\Software\Microsoft\Windows\CurrentVersion debug).debug)))\"'`.
+
+
+## Boogeyman 3
+1. What is the PID of the process that executed the initial stage 1 payload?
+
+    Based on the question, we can see that the file name contain `pdf` string. We can use `*.pdf*` query filter to find any field that contain that string.
+
+    ![alt text](<Assets/Boogeyman 3/1.png>)
+
+    We can see that the process.command.line filed contain exactly the name of the pdf. So, we can check the PID of that event. The answer is `6392`.
+
+2. The stage 1 payload attempted to implant a file to another location. What is the full command-line value of this execution?
+
+    We can check any process with that pid or have `6392` as the parent pid. We can use this filter:
+
+    ```txt
+    process.pid : 6392 or process.parent.pid: 6392
+    ```
+    ![alt text](<Assets/Boogeyman 3/2.png>)
+
+    We can see that it shows that pid `3862` use `xcopy.exe` which is commonly used for copying files. It has ppid `6392` which is the pid of the process that executed the initial stage 1 payload. So, we can check the command line of that event. The answer is `"C:\Windows\System32\xcopy.exe" /s /i /e /h D:\review.dat C:\Users\EVAN~1.HUT\AppData\Local\Temp\review.dat`.
+    This command is automatically copying a specific data file named review.dat from an external drive (like a USB flash drive or external hard drive) into the logged-in user's temporary folder on the local computer.
+
+3. The implanted file was eventually used and executed by the stage 1 payload. What is the full command-line value of this execution?
+
+    We can search by using `review.dat` string to find any field that contain that string.
+
+    ![alt text](<Assets/Boogeyman 3/3.png>)
+
+    We can see that there is a command line that shows the execution of `review.dat` file. The answer is `"C:\Windows\System32\rundll32.exe" D:\review.dat,DllRegisterServer`.
+
+4. The stage 1 payload established a persistence mechanism. What is the name of the scheduled task created by the malicious script?
+
+    We can use the previous filter and scroll down to find the scheduled task creation event. We can see that there is a command line that shows the scheduled task creation. 
+    
+    ![alt text](<Assets/Boogeyman 3/4.png>)
+
+    The answer is `Review`.
+
+5. The execution of the implanted file inside the machine has initiated a potential C2 connection. What is the IP and port used by this connection? (format: IP:port)
+
+    We can filter by using user.name field with `evan.hutchinson` which is the user that execute the implanted file. Then, we can check the `destination.ip` and `destination.port` field to find the IP and port used by this connection. There is only 1 result, the answer is `165.232.170.151:80`.
+
+6. The attacker has discovered that the current access is a local administrator. What is the name of the process used by the attacker to execute a UAC bypass?
+
+    We can filter by using user.name field with `evan.hutchinson` which is the user that execute the implanted file. If we check the order of the log, we will that the user execute `whoami /groups` command to check the current user's group memberships (which most likely includes the high privilege group like in the question). After that, there is a process creation event that shows the execution of `fodhelper.exe` which is commonly used for UAC bypass. So, the answer is `fodhelper.exe`.
+
+    ![alt text](<Assets/Boogeyman 3/5.png>)
+    
+
+7. Having a high privilege machine access, the attacker attempted to dump the credentials inside the machine. What is the GitHub link used by the attacker to download a tool for credential dumping?
+
+    We can filter to find `github` string to find any field that contain that string. The answer is `https://github.com/gentilkiwi/mimikatz/releases/download/2.2.0-20220919/mimikatz_trunk.zip`.
+
+8. After successfully dumping the credentials inside the machine, the attacker used the credentials to gain access to another machine. What is the username and hash of the new credential pair? (format: username:hash)
+
+    We can filter to find `mimikatz` string to find any field that contain that string. We can find the command line that shows the execution of `mimikatz` to execute pass the hash technique. 
+
+    ![alt text](<Assets/Boogeyman 3/6.png>)
+
+    The answer is `itadmin:F84769D250EB95EB2D7D8B4A1C5613F2`.
+
+9. Using the new credentials, the attacker attempted to enumerate accessible file shares. What is the name of the file accessed by the attacker from a remote share?
+
+    In the previous, the attacker used mimikatz to execute pass the hash technique to access another machine. It happened at `Aug 30, 2023 @ 00:13:37.090`. We can filter the log above that time and filter to common enumerate share like `cat`. We can use this filter:
+
+    ```txt
+    user.name: "evan.hutchinson"  and *cat* and @timestamp >= "2023-08-30T00:13:37.090Z"
+    ```
+
+    ![alt text](<Assets/Boogeyman 3/7.png>)
+
+    We can see the answer is `IT_Automation.ps1`.
+
+10. After getting the contents of the remote file, the attacker used the new credentials to move laterally. What is the new set of credentials discovered by the attacker? (format: username:password)
+
+    The attacker enumerate `IT_Automation.ps1` file at `2023-08-30T00:19:52.889Z`. We can filter the log above that time to find the relevant command that shows the new set of credentials discovered by the attacker. We can use this filter:
+
+    ```txt
+    user.name: "evan.hutchinson"   and @timestamp >= "2023-08-30T00:19:52.889Z"
+    ```
+    ![alt text](<Assets/Boogeyman 3/8.png>)
+
+    The answer is `QUICKLOGISTICS\allan.smith:Tr!ckyP@ssw0rd987`.
+
+11. What is the hostname of the attacker's lab machine for its lateral movement attempt?
+
+    We can copy full command in the previous result and we will find the hostname in there. The answer is `WKSTN-1327`.
+
+12. Using the malicious command executed by the attacker from the first machine to move laterally, what is the parent process name of the malicious command executed on the second compromised machine?
+
+    We can filter the log with the hostname of the second compromised machine which is `WKSTN-1327`. We also can narrow down the result by filtering the timestamp that close to the previous question. We can use this filter:
+
+    ```txt
+    host.hostname : "WKSTN-1327" and @timestamp >= "2023-08-30T00:13:37.090Z" and process.parent.name : *
+    ``` 
+    ![alt text](<Assets/Boogeyman 3/9.png>)
+
+    We can see the common enumeration tehnique like `whoami` in there. It has parent process name `wsmprovhost.exe`. So, the answer is `wsmprovhost.exe`.
+
+13. The attacker then dumped the hashes in this second machine. What is the username and hash of the newly dumped credentials? (format: username:hash)
+
+    We can use the previous filter and add `mimikatz` string to find the relevant command that shows the execution of `mimikatz` to dump the credentials in the second machine.
+
+    ```txt
+    host.hostname : "WKSTN-1327" and @timestamp >= "2023-08-30T00:13:37.090Z" and *mimikatz*
+    ```
+    ![alt text](<Assets/Boogeyman 3/10.png>)
+
+    We can see that there is a command line that shows the execution of `mimikatz` to dump the credentials in the second machine. The answer is `administrator:00f80f2538dcb54e7adc715c0e7091ec`.
+
+14. After gaining access to the domain controller, the attacker attempted to dump the hashes via a DCSync attack. Aside from the administrator account, what account did the attacker dump?
+
+    We can filter the log with the hostname of the domain controller which is `DC01`. Here the full filter:
+
+    ```txt
+    @timestamp >= "2023-08-30T00:13:37.090Z" and *mimikatz* and host.hostname : "DC01" 
+    ```
+    The answer is `backupda`.
+
+15. After dumping the hashes, the attacker attempted to download another remote file to execute ransomware. What is the link used by the attacker to download the ransomware binary?
+
+    We can filter based on the hostname, timestamp after the attacker dump the credentials in the domain controller, and filter with `http` string to find the relevant command that shows the link used by the attacker to download the ransomware binary.
+
+    ```txt
+    @timestamp >= "2023-08-30T01:47:57.090Z" and host.hostname : "DC01"  and process.command_line : * and *http*
+    ```
+    The answer is `http://ff.sillytechninja.io/ransomboogey.exe`.
